@@ -47,41 +47,14 @@
 #define ILNP_NUMGROUPS 4
 #define SVCB_MAX_COMMA_SEPARATED_VALUES 1000
 
-
-const dname_type *error_dname;
-//domain_type *error_domain;
-
-static time_t startzonec = 0;
-static long int totalrrs = 0;
-
 extern uint8_t nsecbits[NSEC_WINDOW_COUNT][NSEC_WINDOW_BITS_SIZE];
 extern uint16_t nsec_highest_rcode;
-
-
-__attribute__((always_inline))
-static inline size_t parser_rdata_left(const struct zparser *parser)
-{
-  assert(parser->current_rr.rdata.length <= sizeof(parser->current_rr.rdata.octets));
-  return sizeof(parser->current_rr.rdata.octets) - parser->current_rr.rdata.length;
-}
-
-__attribute__((always_inline))
-static inline uint8_t *parser_rdata(struct zparser *parser)
-{
-  return parser->current_rr.rdata.octets + parser->current_rr.rdata.length;
-}
-
-static inline void *parser_rdata_advance(struct zparser *parser, size_t size)
-{
-  assert(sizeof(parser->current_rr.rdata.octets) - parser->current_rr.rdata.length >= size);
-  parser->current_rr.rdata.length -= size;
-}
 
 /*
  * These are parser function for generic zone file stuff.
  */
 int32_t
-ziadd_rdata_hex(struct zparser *parser, const char *hex, size_t len)
+zadd_rdata_hex(const char *hex, size_t len)
 {
 	/* convert a hex value to wireformat */
 	uint8_t *t;
@@ -123,7 +96,7 @@ ziadd_rdata_hex(struct zparser *parser, const char *hex, size_t len)
 
 /* convert hex, precede by a 1-byte length */
 int32_t
-zparser_conv_hex_length(region_type *region, const char *hex, size_t len)
+zadd_rdata_hex_length(const char *hex, size_t len)
 {
 	if (len % 2 != 0) {
 		zc_error_prev_line("number of hex digits must be a multiple of 2");
@@ -160,7 +133,7 @@ zparser_conv_hex_length(region_type *region, const char *hex, size_t len)
 }
 
 int32_t
-zadd_rdata_time(struct zparser *parser, const char *time)
+zadd_rdata_time(const char *time)
 {
 	/* convert a time YYHM to wireformat */
 	struct tm tm;
@@ -178,8 +151,7 @@ zadd_rdata_time(struct zparser *parser, const char *time)
 }
 
 int32_t
-zadd_rdata_services(struct zparser *parser, const char *protostr,
-		      char *servicestr)
+zadd_rdata_services(const char *protostr, char *servicestr)
 {
 	/*
 	 * Convert a protocol and a list of service port numbers
@@ -242,7 +214,7 @@ zadd_rdata_services(struct zparser *parser, const char *protostr,
 }
 
 int32_t
-zadd_rdata_serial(struct zparser *parser, const char *serialstr)
+zadd_rdata_serial(const char *serialstr)
 {
 	uint32_t serial;
 	const char *t;
@@ -262,7 +234,7 @@ zadd_rdata_serial(struct zparser *parser, const char *serialstr)
 }
 
 int32_t
-zadd_rdata_period(struct zparser *parser, const char *periodstr)
+zadd_rdata_period(const char *periodstr)
 {
 	/* convert a time period (think TTL's) to wireformat) */
 	uint32_t period;
@@ -284,7 +256,7 @@ zadd_rdata_period(struct zparser *parser, const char *periodstr)
 }
 
 int32_t
-zadd_rdata_short(struct zparser *parser, const char *text)
+zadd_rdata_short(const char *text)
 {
 	uint16_t value;
 	char *end;
@@ -303,7 +275,7 @@ zadd_rdata_short(struct zparser *parser, const char *text)
 }
 
 int32_t
-zadd_rdata_byte(struct zparser *parser, const char *text)
+zadd_rdata_byte(const char *text)
 {
 	uint8_t value;
 	char *end;
@@ -322,7 +294,7 @@ zadd_rdata_byte(struct zparser *parser, const char *text)
 }
 
 int32_t
-zadd_rdata_algorithm(struct zparser *parser, const char *text)
+zadd_rdata_algorithm(const char *text)
 {
 	const lookup_table_type *alg;
 	uint8_t id;
@@ -347,7 +319,7 @@ zadd_rdata_algorithm(struct zparser *parser, const char *text)
 }
 
 int32_t
-zadd_rdata_certificate_type(struct zparser *parser, const char *text)
+zadd_rdata_certificate_type(const char *text)
 {
 	/* convert an algorithm string to integer */
 	const lookup_table_type *type;
@@ -373,7 +345,7 @@ zadd_rdata_certificate_type(struct zparser *parser, const char *text)
 }
 
 int32_t
-zadd_rdata_a(struct zparser *parser, const char *text)
+zadd_rdata_a(const char *text)
 {
 	in_addr_t address;
 	if (inet_pton(AF_INET, text, &address) != 1) {
@@ -389,7 +361,7 @@ zadd_rdata_a(struct zparser *parser, const char *text)
 }
 
 int32_t
-zadd_rdata_aaaa(struct zparser *parser, const char *text)
+zadd_rdata_aaaa(const char *text)
 {
 	uint8_t address[IP6ADDRLEN];
 
@@ -407,7 +379,7 @@ zadd_rdata_aaaa(struct zparser *parser, const char *text)
 
 
 int32_t
-zadd_rdata_ilnp64(struct zparser *parser, const char *text)
+zadd_rdata_ilnp64(const char *text)
 {
 	int ngroups, num;
 	unsigned long hex;
@@ -477,7 +449,7 @@ zadd_rdata_ilnp64(struct zparser *parser, const char *text)
 }
 
 static int32_t
-zparser_conv_eui48(struct zparser *parser, const char *text)
+zparser_conv_eui48(const char *text)
 {
   uint8_t *p;
 	uint8_t nums[6];
@@ -503,7 +475,7 @@ zparser_conv_eui48(struct zparser *parser, const char *text)
 }
 
 static int32_t
-zparser_conv_eui64(struct zparser *parser, const char *text)
+zparser_conv_eui64(const char *text)
 {
   uint8_t *p;
 	uint8_t nums[8];
@@ -530,7 +502,7 @@ zparser_conv_eui64(struct zparser *parser, const char *text)
 }
 
 int32_t
-zadd_rdata_eui(struct zparser *parser, const char *text, size_t len)
+zadd_rdata_eui(const char *text, size_t len)
 {
 	int nnum, num;
 	const char* ch;
@@ -554,10 +526,10 @@ zadd_rdata_eui(struct zparser *parser, const char *text, size_t len)
 
 	switch (len) {
 		case 48:
-			return zparser_conv_eui48(parser, text);
+			return zparser_conv_eui48(text);
 			break;
 		case 64:
-			return zparser_conv_eui64(parser, text);
+			return zparser_conv_eui64(text);
 		break;
 		default:
 			zc_error_prev_line("eui%u: invalid length",
@@ -569,7 +541,7 @@ zadd_rdata_eui(struct zparser *parser, const char *text, size_t len)
 }
 
 int32_t
-zadd_rdata_text(struct zparser *parser, const char *text, size_t len)
+zadd_rdata_text(const char *text, size_t len)
 {
 	uint8_t *p;
 
@@ -587,7 +559,7 @@ zadd_rdata_text(struct zparser *parser, const char *text, size_t len)
 
 /* for CAA Value [RFC 6844] */
 int32_t
-zadd_rdata_long_text(struct zparser *parser, const char *text, size_t len)
+zadd_rdata_long_text(const char *text, size_t len)
 {
 	uint8_t *p;
 	if (len > parser_rdata_left(parser)) {
@@ -602,7 +574,7 @@ zadd_rdata_long_text(struct zparser *parser, const char *text, size_t len)
 
 /* for CAA Tag [RFC 6844] */
 int32_t
-zadd_rdata_tag(struct zparser *parser, const char *text, size_t len)
+zadd_rdata_tag(const char *text, size_t len)
 {
 	uint8_t *p;
 	const char* ptr;
@@ -630,7 +602,7 @@ zadd_rdata_tag(struct zparser *parser, const char *text, size_t len)
 }
 
 int32_t
-zadd_rdata_dns_name(struct zparser *parser, const uint8_t* name, size_t len)
+zadd_rdata_dns_name(const uint8_t* name, size_t len)
 {
 	uint8_t* p = NULL;
 	p = parser_rdata(parser);
@@ -641,7 +613,7 @@ zadd_rdata_dns_name(struct zparser *parser, const uint8_t* name, size_t len)
 }
 
 int32_t
-zadd_rdata_b32(struct zparser *parser, const char *b32)
+zadd_rdata_b32(const char *b32)
 {
 	uint8_t buffer[B64BUFSIZE];
   uint8_t *p;
@@ -667,7 +639,7 @@ zadd_rdata_b32(struct zparser *parser, const char *b32)
 }
 
 int32_t
-zadd_rdata_b64(struct zparser *parser, const char *b64)
+zadd_rdata_b64(const char *b64)
 {
 	uint8_t buffer[B64BUFSIZE];
   uint8_t *p;
@@ -690,7 +662,7 @@ zadd_rdata_b64(struct zparser *parser, const char *b64)
 }
 
 int32_t
-zadd_rdata_rrtype(struct zparser *parser, const char *text)
+zadd_rdata_rrtype(const char *text)
 {
 	uint8_t *p;
 	uint16_t type = rrtype_from_string(text);
@@ -708,7 +680,7 @@ zadd_rdata_rrtype(struct zparser *parser, const char *text)
 }
 
 int32_t
-zparser_conv_nxt(struct zparser *parser, uint8_t nxtbits[])
+zadd_rdata_nxt(uint8_t nxtbits[])
 {
 	/* nxtbits[] consists of 16 bytes with some zero's in it
 	 * copy every byte with zero to r and write the length in
@@ -734,7 +706,7 @@ zparser_conv_nxt(struct zparser *parser, uint8_t nxtbits[])
  * should be discarded
  */
 int32_t
-zadd_rdata_nsec(struct zparser *parser,
+zadd_rdata_nsec(
 		  uint8_t nsecbits[NSEC_WINDOW_COUNT][NSEC_WINDOW_BITS_SIZE])
 {
 	/* nsecbits contains up to 64K of bits which represent the
@@ -861,7 +833,7 @@ svcbparam_lookup_key(const char *key, size_t key_len)
 }
 
 static int32_t
-zadd_rdata_svcbparam_port_value(struct zparser *parser, const char *val)
+zadd_rdata_svcbparam_port_value(const char *val)
 {
 	unsigned long int port;
 	char *endptr;
@@ -884,7 +856,7 @@ zadd_rdata_svcbparam_port_value(struct zparser *parser, const char *val)
 }
 
 static int32_t
-zadd_rdata_svcbparam_ipv4hint_value(struct zparser *parser, const char *val)
+zadd_rdata_svcbparam_ipv4hint_value(const char *val)
 {
 	uint16_t *p;
 	int count;
@@ -944,7 +916,7 @@ zadd_rdata_svcbparam_ipv4hint_value(struct zparser *parser, const char *val)
 }
 
 static int32_t
-zadd_rdata_svcbparam_ipv6hint_value(struct zparser *parser, const char *val)
+zadd_rdata_svcbparam_ipv6hint_value(const char *val)
 {
 	uint16_t *p;
 	int i, count;
@@ -1009,7 +981,7 @@ network_uint16_cmp(const void *a, const void *b)
 }
 
 static int32_t
-zadd_rdata_svcbparam_mandatory_value(struct zparser *parser,
+zadd_rdata_svcbparam_mandatory_value(
 		const char *val, size_t val_len)
 {
 	uint16_t *p;
@@ -1056,7 +1028,7 @@ zadd_rdata_svcbparam_mandatory_value(struct zparser *parser,
 }
 
 static int32_t
-zadd_rdata_svcbparam_ech_value(struct zparser *parser, const char *b64)
+zadd_rdata_svcbparam_ech_value(const char *b64)
 {
 	uint8_t buffer[B64BUFSIZE];
 	uint16_t *p;
@@ -1116,7 +1088,7 @@ parse_alpn_copy_unescaped(uint8_t *dst, const char *src, size_t len)
 }
 
 static int32_t
-zadd_rdata_svcbparam_alpn_value(struct zparser *parser,
+zadd_rdata_svcbparam_alpn_value(
 		const char *val, size_t val_len)
 {
 	uint8_t     unescaped_dst[65536];
@@ -1162,7 +1134,7 @@ zadd_rdata_svcbparam_alpn_value(struct zparser *parser,
 }
 
 static int32_t
-zadd_rdata_svcbparam_key_value(struct zparser *parser,
+zadd_rdata_svcbparam_key_value(
     const char *key, size_t key_len, const char *val, size_t val_len)
 {
 	uint16_t svcparamkey = svcbparam_lookup_key(key, key_len);
@@ -1170,13 +1142,13 @@ zadd_rdata_svcbparam_key_value(struct zparser *parser,
 
 	switch (svcparamkey) {
 	case SVCB_KEY_PORT:
-		return zadd_rdata_svcbparam_port_value(parser, val);
+		return zadd_rdata_svcbparam_port_value(val);
 	case SVCB_KEY_IPV4HINT:
-		return zadd_rdata_svcbparam_ipv4hint_value(parser, val);
+		return zadd_rdata_svcbparam_ipv4hint_value(val);
 	case SVCB_KEY_IPV6HINT:
-		return zadd_rdata_svcbparam_ipv6hint_value(parser, val);
+		return zadd_rdata_svcbparam_ipv6hint_value(val);
 	case SVCB_KEY_MANDATORY:
-		return zadd_rdata_svcbparam_mandatory_value(parser, val, val_len);
+		return zadd_rdata_svcbparam_mandatory_value(val, val_len);
 	case SVCB_KEY_NO_DEFAULT_ALPN:
 //		if(zone_is_slave(parser->current_zone->opts))
 //			zc_warning_prev_line("no-default-alpn should not have a value");
@@ -1184,9 +1156,9 @@ zadd_rdata_svcbparam_key_value(struct zparser *parser,
 			zc_error_prev_line("no-default-alpn should not have a value");
 		break;
 	case SVCB_KEY_ECH:
-		return zadd_rdata_svcbparam_ech_value(parser, val);
+		return zadd_rdata_svcbparam_ech_value(val);
 	case SVCB_KEY_ALPN:
-		return zadd_rdata_svcbparam_alpn_value(parser, val, val_len);
+		return zadd_rdata_svcbparam_alpn_value(val, val_len);
 	case SVCB_KEY_DOHPATH:
 		/* fallthrough */
 	default:
@@ -1201,7 +1173,7 @@ zadd_rdata_svcbparam_key_value(struct zparser *parser,
 }
 
 int32_t
-zadd_rdata_svcbparam(struct zparser *parser, const char *key, size_t key_len
+zadd_rdata_svcbparam(const char *key, size_t key_len
                                           , const char *val, size_t val_len)
 {
 	const char *eq;
@@ -1213,7 +1185,7 @@ zadd_rdata_svcbparam(struct zparser *parser, const char *key, size_t key_len
 		/* Does key end with '=' */
 		if (key_len && key[key_len - 1] == '=')
 			return zadd_rdata_svcbparam_key_value(
-			    parser, key, key_len - 1, val, val_len);
+			    key, key_len - 1, val, val_len);
 
 		zc_error_prev_line( "SvcParam syntax error in param: %s\"%s\""
 		                  , key, val);
@@ -1223,7 +1195,7 @@ zadd_rdata_svcbparam(struct zparser *parser, const char *key, size_t key_len
 		size_t new_key_len = eq - key;
 
 		if (key_len - new_key_len - 1 > 0)
-			return zadd_rdata_svcbparam_key_value(parser,
+			return zadd_rdata_svcbparam_key_value(
 			    key, new_key_len, eq+1, key_len - new_key_len - 1);
 		key_len = new_key_len;
 	}
@@ -1341,7 +1313,7 @@ precsize_aton (char *cp, char **endptr)
  *
  */
 int32_t
-zadd_rdata_loc(struct zparser *parser, char *str)
+zadd_rdata_loc(char *str)
 {
 	uint16_t *r;
 	uint32_t *p;
@@ -1525,7 +1497,7 @@ zadd_rdata_loc(struct zparser *parser, char *str)
  * Convert an APL RR RDATA element.
  */
 int32_t
-zadd_rdata_apl_rdata(struct zparser *parser, char *str)
+zadd_rdata_apl_rdata(char *str)
 {
 	int negated = 0;
 	uint16_t address_family;
@@ -1643,7 +1615,7 @@ zparser_ttl2int(const char *ttlstr, int* error)
 }
 
 void
-zadd_rdata_domain(struct zparser *parser, const struct dname *dname)
+zadd_rdata_domain(const struct dname *dname)
 {
   uint8_t *p = parser_rdata(parser);
   memcpy(p, dname_name(dname), dname->name_size);
@@ -1681,7 +1653,6 @@ zone_open(const char *filename, uint32_t ttl, uint16_t klass,
 	return 1;
 }
 
-
 void
 set_bitnsec(uint8_t bits[NSEC_WINDOW_COUNT][NSEC_WINDOW_BITS_SIZE],
 	    uint16_t index)
@@ -1696,17 +1667,26 @@ set_bitnsec(uint8_t bits[NSEC_WINDOW_COUNT][NSEC_WINDOW_BITS_SIZE],
 	bits[window][bit / 8] |= (1 << (7 - bit % 8));
 }
 
-
 int
-process_rr(struct zparser *parser)
+process_rr(void)
 {
-	if (parser->current_rr.owner == error_dname) {
+	if (parser->current_rr.owner == NULL) {
 		zc_error_prev_line("invalid owner name");
 		return 0;
 	}
 
-  if (parser->callback(parser) == 0)
+  if (parser->callback(parser->current_rr.owner,
+                       parser->current_rr.type,
+                       parser->current_rr.klass,
+                       parser->current_rr.ttl,
+                       parser->current_rr.rdata.length,
+                       parser->current_rr.rdata.octets,
+                       parser->user_data) == 0)
+  {
+    parser->current_rr.rdata.length = 0;
     return 1;
+  }
+  parser->current_rr.rdata.length = 0;
   return 0;
 }
 
@@ -1715,12 +1695,13 @@ process_rr(struct zparser *parser)
  * nsd_options can be NULL if no config file is passed.
  */
 unsigned int
-zonec_read(struct zparser *parser, const char* name, const char* zonefile)
+zonec_read(const char* name, const char* zonefile)
 {
+  assert(parser);
 	const dname_type *dname;
 
-	totalrrs = 0;
-	startzonec = time(NULL);
+	//totalrrs = 0;
+	//startzonec = time(NULL);
 	parser->errors = 0;
 
 	dname = dname_parse(parser->rr_region, name);
@@ -1747,19 +1728,14 @@ zonec_read(struct zparser *parser, const char* name, const char* zonefile)
 	return parser->errors;
 }
 
-#if 0
 /*
  * setup parse
  */
 void
-zonec_setup_parser(namedb_type* db)
+zonec_setup_parser(void)
 {
-	region_type* rr_region = region_create(xalloc, free);
-	parser = zparser_create(db->region, rr_region, db);
+	parser = zparser_create();
 	assert(parser);
-	/* Unique pointers used to mark errors.	 */
-	error_dname = (dname_type *) region_alloc(db->region, 1);
-	error_domain = (domain_type *) region_alloc(db->region, 1);
 	/* Open the network database */
 	setprotoent(1);
 	setservent(1);
@@ -1772,15 +1748,14 @@ zonec_desetup_parser(void)
 	if(parser) {
 		endservent();
 		endprotoent();
+    region_destroy(parser->region);
 		region_destroy(parser->rr_region);
+    free(parser);
 		/* removed when parser->region(=db->region) is destroyed:
 		 * region_recycle(parser->region, (void*)error_dname, 1);
 		 * region_recycle(parser->region, (void*)error_domain, 1); */
 		/* clear memory for exit, but this is not portable to
 		 * other versions of lex. yylex_destroy(); */
-#ifdef MEMCLEAN /* OS collects memory pages */
 		yylex_destroy();
-#endif
 	}
 }
-#endif

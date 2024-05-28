@@ -38,20 +38,18 @@ struct lex_data {
 // we need somewhere to store rdata
 // we need something to represent the owner
 
+typedef int32_t(*zonec_callback)(
+  struct dname *, uint16_t, uint16_t, uint32_t, uint16_t, uint8_t *, void *);
+
 /* administration struct */
-typedef struct zparser zparser_type;
 struct zparser {
-	//region_type *region;	/* Allocate for parser lifetime data.  */
+  region_type *region;
 	region_type *rr_region;	/* Allocate RR lifetime data.  */
-	//namedb_type *db;
 
 	const char *filename;
 	uint32_t default_ttl;
 	uint16_t default_class;
-	//zone_type *current_zone;
   struct dname *origin;
-	//domain_type *origin;
-	//domain_type *prev_dname;
 
 	int error_occurred;
 	unsigned int errors;
@@ -68,10 +66,10 @@ struct zparser {
     } rdata;
   } current_rr;
   void *user_data;
-  int32_t (*callback)(struct zparser *parser);
+  zonec_callback callback;
 };
 
-extern zparser_type *parser;
+extern struct zparser *parser;
 
 /* used in zonec.lex */
 extern FILE *yyin;
@@ -91,82 +89,92 @@ void yyrestart(FILE *);
 
 void zc_warning(const char *fmt, ...)
   __attribute__((format(printf, 1, 2)));
-  //ATTR_FORMAT(printf, 1, 2);
 void zc_warning_prev_line(const char *fmt, ...)
   __attribute__((format(printf, 1, 2)));
-  // ATTR_FORMAT(printf, 1, 2);
 void zc_error(const char *fmt, ...)
   __attribute__((format(printf, 1, 2)));
-  // ATTR_FORMAT(printf, 1, 2);
 void zc_error_prev_line(const char *fmt, ...)
   __attribute__((format(printf, 1, 2)));
-  //ATTR_FORMAT(printf, 1, 2);
 
 void parser_push_stringbuf(char* str);
 void parser_pop_stringbuf(void);
 void parser_flush(void);
 
-int process_rr(struct zparser *parser);
-int32_t zadd_rdata_hex(struct zparser *parser, const char *hex, size_t len);
-int32_t zadd_rdata_hex_length(struct zparser *parser, const char *hex, size_t len);
-int32_t zadd_rdata_time(struct zparser *parser, const char *time);
-int32_t zadd_rdata_services(struct zparser *parser, const char *protostr, char *servicestr);
-int32_t zadd_rdata_serial(struct zparser *parser, const char *periodstr);
-int32_t zadd_rdata_period(struct zparser *parser, const char *periodstr);
-int32_t zadd_rdata_short(struct zparser *parser, const char *text);
-int32_t zadd_rdata_long(struct zparser *parser, const char *text);
-int32_t zadd_rdata_byte(struct zparser *parser, const char *text);
-int32_t zadd_rdata_a(struct zparser *parser, const char *text);
-int32_t zadd_rdata_aaaa(struct zparser *parser, const char *text);
-int32_t zadd_rdata_ilnp64(struct zparser *parser, const char *text);
-int32_t zadd_rdata_eui(struct zparser *parser, const char *text, size_t len);
-int32_t zadd_rdata_text(struct zparser *parser, const char *text, size_t len);
-int32_t zadd_rdata_long_text(struct zparser *parser, const char *text, size_t len);
-int32_t zadd_rdata_tag(struct zparser *parser, const char *text, size_t len);
-int32_t zadd_rdata_dns_name(struct zparser *parser, const uint8_t* name, size_t len);
-int32_t zadd_rdata_b32(struct zparser *parser, const char *b32);
-int32_t zadd_rdata_b64(struct zparser *parser, const char *b64);
-int32_t zadd_rdata_rrtype(struct zparser *parser, const char *rr);
-int32_t zadd_rdata_nxt(struct zparser *parser, uint8_t nxtbits[]);
-int32_t zadd_rdata_nsec(struct zparser *parser, uint8_t nsecbits[NSEC_WINDOW_COUNT][NSEC_WINDOW_BITS_SIZE]);
-int32_t zadd_rdata_loc(struct zparser *parser, char *str);
-int32_t zadd_rdata_algorithm(struct zparser *parser, const char *algstr);
-int32_t zadd_rdata_certificate_type(struct zparser *parser,
-					const char *typestr);
-int32_t zadd_rdata_apl_rdata(struct zparser *parser, char *str);
-int32_t zadd_rdata_svcbparam(struct zparser *parser,
+int process_rr(void);
+int32_t zadd_rdata_hex(const char *hex, size_t len);
+int32_t zadd_rdata_hex_length(const char *hex, size_t len);
+int32_t zadd_rdata_time(const char *time);
+int32_t zadd_rdata_services(const char *protostr, char *servicestr);
+int32_t zadd_rdata_serial(const char *periodstr);
+int32_t zadd_rdata_period(const char *periodstr);
+int32_t zadd_rdata_short(const char *text);
+int32_t zadd_rdata_long(const char *text);
+int32_t zadd_rdata_byte(const char *text);
+int32_t zadd_rdata_a(const char *text);
+int32_t zadd_rdata_aaaa(const char *text);
+int32_t zadd_rdata_ilnp64(const char *text);
+int32_t zadd_rdata_eui(const char *text, size_t len);
+int32_t zadd_rdata_text(const char *text, size_t len);
+int32_t zadd_rdata_long_text(const char *text, size_t len);
+int32_t zadd_rdata_tag(const char *text, size_t len);
+int32_t zadd_rdata_dns_name(const uint8_t* name, size_t len);
+int32_t zadd_rdata_b32(const char *b32);
+int32_t zadd_rdata_b64(const char *b64);
+int32_t zadd_rdata_rrtype(const char *rr);
+int32_t zadd_rdata_nxt(uint8_t nxtbits[]);
+int32_t zadd_rdata_nsec(uint8_t nsecbits[NSEC_WINDOW_COUNT][NSEC_WINDOW_BITS_SIZE]);
+int32_t zadd_rdata_loc(char *str);
+int32_t zadd_rdata_algorithm(const char *algstr);
+int32_t zadd_rdata_certificate_type(const char *typestr);
+int32_t zadd_rdata_apl_rdata(char *str);
+int32_t zadd_rdata_svcbparam(
 	const char *key, size_t key_len, const char *value, size_t value_len);
-
-void parse_unknown_rdata(uint16_t type, uint16_t *wireformat);
 
 uint32_t zparser_ttl2int(const char *ttlstr, int* error);
 //void zadd_rdata_wireformat(uint16_t *data);
-void zadd_rdata_txt_wireformat(uint16_t *data, int first);
+//void zadd_rdata_txt_wireformat(uint16_t *data, int first);
 //void zadd_rdata_txt_clean_wireformat(void);
-void zadd_rdata_svcb_check_wireformat(void);
-void zadd_rdata_domain(struct zparser *parser, const struct dname *dname);
+//void zadd_rdata_svcb_check_wireformat(void);
+void zadd_rdata_domain(const struct dname *dname);
 
 void set_bitnsec(uint8_t  bits[NSEC_WINDOW_COUNT][NSEC_WINDOW_BITS_SIZE],
 		 uint16_t index);
-uint16_t *alloc_rdata_init(region_type *region, const void *data, size_t size);
 
 /* zparser.y */
-struct zparser *zparser_create(struct region *rr_region);
-//			     namedb_type *db);<< name db is obviously not used!!!!
+struct zparser *zparser_create(void);
 void zparser_init(const char *filename, uint32_t ttl, uint16_t klass,
 		  const dname_type *origin);
 
 /* parser start and stop to parse a zone */
-//void zonec_setup_parser(namedb_type* db);
-//void zonec_desetup_parser(void);
+void zonec_setup_parser(void);
+void zonec_desetup_parser(void);
 /* parse a zone into memory. name is origin. zonefile is file to read.
  * returns number of errors; failure may have read a partial zone */
-unsigned int zonec_read(struct zparser *parser, const char *name, const char *zonefile);
+unsigned int zonec_read(const char *name, const char *zonefile);
 /* parse a string into the region. and with given domaintable. global parser
  * is restored afterwards. zone needs apex set. returns last domain name
  * parsed and the number rrs parse. return number of errors, 0 is success.
  * The string must end with a newline after the RR. */
 //int zonec_parse_string(region_type* region, domain_table_type* domains,
 //	zone_type* zone, char* str, domain_type** parsed, int* num_rrs);
+
+__attribute__((always_inline))
+static inline size_t parser_rdata_left(const struct zparser *parser)
+{
+  assert(parser->current_rr.rdata.length <= sizeof(parser->current_rr.rdata.octets));
+  return sizeof(parser->current_rr.rdata.octets) - parser->current_rr.rdata.length;
+}
+
+__attribute__((always_inline))
+static inline uint8_t *parser_rdata(struct zparser *parser)
+{
+  return parser->current_rr.rdata.octets + parser->current_rr.rdata.length;
+}
+
+static inline void *parser_rdata_advance(struct zparser *parser, size_t size)
+{
+  assert(sizeof(parser->current_rr.rdata.octets) - parser->current_rr.rdata.length >= size);
+  parser->current_rr.rdata.length += size;
+}
 
 #endif /* ZONEC_H */

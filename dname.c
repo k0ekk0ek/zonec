@@ -19,6 +19,7 @@
 
 #include "dns.h"
 #include "dname.h"
+#include "util.h"
 
 const dname_type *
 dname_make(region_type *region, const uint8_t *name, int normalize)
@@ -84,6 +85,112 @@ dname_make(region_type *region, const uint8_t *name, int normalize)
 		       name_size * sizeof(uint8_t));
 	}
 	return result;
+}
+
+const dname_type *
+dname_parse(region_type *region, const char *name)
+{
+  uint8_t dname[MAXDOMAINLEN];
+  if(!dname_parse_wire(dname, name))
+    return 0;
+  return dname_make(region, dname, 1);
+}
+
+int dname_parse_wire(uint8_t* dname, const char* name)
+{
+  const uint8_t *s = (const uint8_t *) name;
+  uint8_t *h;
+  uint8_t *p;
+  uint8_t *d = dname;
+  size_t label_length;
+
+  if (strcmp(name, ".") == 0) {
+    /* Root domain.  */
+    dname[0] = 0;
+    return 1;
+  }
+
+  for (h = d, p = h + 1; *s; ++s, ++p) {
+    if (p - dname >= MAXDOMAINLEN) {
+      return 0;
+    }
+
+    switch (*s) {
+    case '.':
+      if (p == h + 1) {
+        /* Empty label.  */
+        return 0;
+      } else {
+        label_length = p - h - 1;
+        if (label_length > MAXLABELLEN) {
+          return 0;
+        }
+        *h = label_length;
+        h = p;
+      }
+      break;
+    case '\\':
+      /* Handle escaped characters (RFC1035 5.1) */
+      if (isdigit((unsigned char)s[1]) && isdigit((unsigned char)s[2]) && isdigit((unsigned char)s[3])) {
+        int val = (hexdigit_to_int(s[1]) * 100 +
+             hexdigit_to_int(s[2]) * 10 +
+             hexdigit_to_int(s[3]));
+        if (0 <= val && val <= 255) {
+          s += 3;
+          *p = val;
+        } else {
+          *p = *++s;
+        }
+      } else if (s[1] != '\0') {
+        *p = *++s;
+      }
+      break;
+    default:
+      *p = *s;
+      break;
+    }
+  }
+
+  if (p != h + 1) {
+    /* Terminate last label.  */
+    label_length = p - h - 1;
+    if (label_length > MAXLABELLEN) {
+      return 0;
+    }
+    *h = label_length;
+    h = p;
+    p++;
+  }
+
+  /* Add root label.  */
+  if (h - dname >= MAXDOMAINLEN) {
+    return 0;
+  }
+  *h = 0;
+
+  return p-dname;
+}
+
+const dname_type *
+dname_copy(region_type *region, const dname_type *dname)
+{
+  return (dname_type *) region_alloc_init(
+    region, dname, dname_total_size(dname));
+}
+
+const dname_type *
+dname_make_from_label(region_type *region,
+          const uint8_t *label, const size_t length)
+{
+  uint8_t temp[MAXLABELLEN + 2];
+
+  assert(length > 0 && length <= MAXLABELLEN);
+
+  temp[0] = length;
+  memcpy(temp + 1, label, length * sizeof(uint8_t));
+  temp[length + 1] = '\000';
+
+  return dname_make(region, temp, 1);
 }
 
 const dname_type *

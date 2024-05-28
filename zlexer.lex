@@ -43,7 +43,7 @@ enum lexer_state {
 static int parse_token(int token, char *yytext, enum lexer_state *lexer_state);
 
 static YY_BUFFER_STATE include_stack[MAXINCLUDES];
-static zparser_type zparser_stack[MAXINCLUDES];
+static struct zparser zparser_stack[MAXINCLUDES];
 static int include_stack_ptr = 0;
 
 /*

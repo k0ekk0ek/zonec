@@ -13,9 +13,11 @@
 #include <stdlib.h>
 
 #include "zonec.h"
+#include "util.h"
 
 /* these need to be global, otherwise they cannot be used inside yacc */
-zparser_type *parser;
+/* not really, but I don't feel like changing all of that */
+struct zparser *parser;
 
 #ifdef __cplusplus
 extern "C"
@@ -35,16 +37,13 @@ uint16_t nsec_highest_rcode;
 
 void yyerror(const char *message);
 
-#ifdef NSEC3
 /* parse nsec3 parameters and add the (first) rdata elements */
 static void
 nsec3_add_params(const char* hash_algo_str, const char* flag_str,
 	const char* iter_str, const char* salt_str, int salt_len);
-#endif /* NSEC3 */
 
 %}
 %union {
-	//domain_type	 *domain;
 	const dname_type *dname;
 	struct lex_data	  data;
 	uint32_t	  ttl;
@@ -83,7 +82,6 @@ nsec3_add_params(const char* hash_algo_str, const char* flag_str,
 %type <data>	str concatenated_str_seq str_sp_seq str_dot_seq
 %type <data>	unquoted_dotted_str dotted_str svcparam svcparams
 %type <data>	nxt_seq nsec_more
-%type <unknown> rdata_unknown
 
 %%
 lines:	/* empty file */
@@ -97,31 +95,18 @@ line:	NL
 	{
 	    region_free_all(parser->rr_region);
 	    parser->current_rr.type = 0;
-	    // the stuff below is not really that important anymore?!?!
-	    //parser->current_rr.rdata_count = 0;
-	    //parser->current_rr.rdatas = parser->temporary_rdatas;
 	    parser->error_occurred = 0;
     }
     |	origin_directive
-	{
+    {
 	    region_free_all(parser->rr_region);
 	    parser->current_rr.type = 0;
-	    //parser->current_rr.rdata_count = 0;
-	    //parser->current_rr.rdatas = parser->temporary_rdatas;
 	    parser->error_occurred = 0;
     }
     |	rr
     {	/* rr should be fully parsed */
 	    if (!parser->error_occurred) {
-			    //parser->current_rr.rdatas
-				  //  =(rdata_atom_type *)region_alloc_array_init(
-					//    parser->region,
-					//    parser->current_rr.rdatas,
-					//    parser->current_rr.rdata_count,
-					//    sizeof(rdata_atom_type));
-
-			    process_rr(parser); // << we really should just parse the zonec struct
-			                  //    this is just terrible!
+			    process_rr();
 	    }
 
 	    region_free_all(parser->rr_region);
@@ -156,14 +141,7 @@ ttl_directive:	DOLLAR_TTL sp str trail
 
 origin_directive:	DOLLAR_ORIGIN sp abs_dname trail
     {
-	    /* if previous origin is unused, remove it, do not leak it */
-	    //if(parser->origin != error_domain && parser->origin != $3) {
-	      /* protect $3 from deletion, because deldomain walks up */
-	      //$3->usage ++;
-	    	//domain_table_deldomain(parser->db, parser->origin);
-	      //$3->usage --;
-	    //}
-	    parser->origin = $3;
+	    parser->origin = dname_copy(parser->region, $3);
     }
     |	DOLLAR_ORIGIN sp rel_dname trail
     {
@@ -219,14 +197,14 @@ classttl:	/* empty - fill in the default, def. ttl and IN class */
 dname:	abs_dname
     |	rel_dname
     {
-	    if ($1 == error_dname) {
-		    $$ = error_dname;
-	    } else if(parser->origin == error_dname) {
+	    if ($1 == NULL) {
+		    $$ = NULL;
+	    } else if(parser->origin == NULL) {
 		    zc_error("cannot concatenate origin to domain name, because origin failed to parse");
-		    $$ = error_dname;
+		    $$ = NULL;
 	    } else if ($1->name_size + parser->origin->name_size - 1 > MAXDOMAINLEN) {
 		    zc_error("domain name exceeds %d character limit", MAXDOMAINLEN);
-		    $$ = error_dname;
+		    $$ = NULL;
 	    } else {
 		    $$ = dname_concatenate(parser->rr_region, $1, parser->origin);
 	    }
@@ -236,7 +214,6 @@ dname:	abs_dname
 abs_dname:	'.'
     {
 	    $$ = dname_make(parser->rr_region, ".", 0);
-//parser->db->domains->root;
     }
     |	'@'
     {
@@ -245,11 +222,6 @@ abs_dname:	'.'
     |	rel_dname '.'
     {
 	    $$ = $1;
-//if ($1 != error_dname) {
-//		    $$ = domain_table_insert(parser->db->domains, $1);
-//	    } else {
-//		    $$ = error_dname;
-//	    }
     }
     ;
 
@@ -257,10 +229,10 @@ label:	str
     {
 	    if ($1.len > MAXLABELLEN) {
 		    zc_error("label exceeds %d character limit", MAXLABELLEN);
-		    $$ = error_dname;
+		    $$ = NULL;
 	    } else if ($1.len <= 0) {
 		    zc_error("zero label length");
-		    $$ = error_dname;
+		    $$ = NULL;
 	    } else {
 		    $$ = dname_make_from_label(parser->rr_region,
 					       (uint8_t *) $1.str,
@@ -270,19 +242,19 @@ label:	str
     |	BITLAB
     {
 	    zc_error("bitlabels are now deprecated. RFC2673 is obsoleted.");
-	    $$ = error_dname;
+	    $$ = NULL;
     }
     ;
 
 rel_dname:	label
     |	rel_dname '.' label
     {
-	    if ($1 == error_dname || $3 == error_dname) {
-		    $$ = error_dname;
+	    if ($1 == NULL || $3 == NULL) {
+		    $$ = NULL;
 	    } else if ($1->name_size + $3->name_size - 1 > MAXDOMAINLEN) {
 		    zc_error("domain name exceeds %d character limit",
 			     MAXDOMAINLEN);
-		    $$ = error_dname;
+		    $$ = NULL;
 	    } else {
 		    $$ = dname_concatenate(parser->rr_region, $1, $3);
 	    }
@@ -380,38 +352,38 @@ wire_rel_dname:	wire_label
 
 str_seq:	unquoted_dotted_str
     {
-	    zadd_rdata_text(parser, $1.str, $1.len);
+	    zadd_rdata_text($1.str, $1.len);
     }
     |	QSTR
     {
-	    zadd_rdata_text(parser, $1.str, $1.len);
+	    zadd_rdata_text($1.str, $1.len);
     }
     |	QSTR unquoted_dotted_str
     {
-	    zadd_rdata_text(parser, $1.str, $1.len);
-	    zadd_rdata_text(parser, $2.str, $2.len);
+	    zadd_rdata_text($1.str, $1.len);
+	    zadd_rdata_text($2.str, $2.len);
     }
     |	str_seq QSTR
     {
-	    zadd_rdata_text(parser, $2.str, $2.len);
+	    zadd_rdata_text($2.str, $2.len);
     }
     |	str_seq QSTR unquoted_dotted_str
     {
-	    zadd_rdata_text(parser, $2.str, $2.len);
-	    zadd_rdata_text(parser, $3.str, $3.len);
+	    zadd_rdata_text($2.str, $2.len);
+	    zadd_rdata_text($3.str, $3.len);
     }
     |	str_seq sp unquoted_dotted_str
     {
-	    zadd_rdata_text(parser, $3.str, $3.len);
+	    zadd_rdata_text($3.str, $3.len);
     }
     |	str_seq sp QSTR
     {
-	    zadd_rdata_text(parser, $3.str, $3.len);
+	    zadd_rdata_text($3.str, $3.len);
     }
     |	str_seq sp QSTR unquoted_dotted_str
     {
-	    zadd_rdata_text(parser, $3.str, $3.len);
-	    zadd_rdata_text(parser, $4.str, $4.len);
+	    zadd_rdata_text($3.str, $3.len);
+	    zadd_rdata_text($4.str, $4.len);
     }
     ;
 
@@ -567,33 +539,19 @@ type_and_rdata:
      * All supported RR types.	We don't support NULL and types marked obsolete.
      */
     	T_A sp rdata_a
-    |	T_A sp rdata_unknown { $$ = $1; parse_unknown_rdata($1, $3); }
+    |	T_A sp rdata_unknown
     |	T_NS sp rdata_domain_name
-    |	T_NS sp rdata_unknown { $$ = $1; parse_unknown_rdata($1, $3); }
-    |	T_MD sp rdata_domain_name { zc_warning_prev_line("MD is obsolete"); }
+    |	T_NS sp rdata_unknown
+    |	T_MD sp rdata_domain_name
     |	T_MD sp rdata_unknown
-    {
-	    zc_warning_prev_line("MD is obsolete");
-	    $$ = $1; parse_unknown_rdata($1, $3);
-    }
-    |	T_MF sp rdata_domain_name { zc_warning_prev_line("MF is obsolete"); }
+    |	T_MF sp rdata_domain_name
     |	T_MF sp rdata_unknown
-    {
-	    zc_warning_prev_line("MF is obsolete");
-	    $$ = $1;
-	    parse_unknown_rdata($1, $3);
-    }
     |	T_CNAME sp rdata_domain_name
-    |	T_CNAME sp rdata_unknown { $$ = $1; parse_unknown_rdata($1, $3); }
+    |	T_CNAME sp rdata_unknown
     |	T_SOA sp rdata_soa
-    |	T_SOA sp rdata_unknown { $$ = $1; parse_unknown_rdata($1, $3); }
-    |	T_MB sp rdata_domain_name { zc_warning_prev_line("MB is obsolete"); }
+    |	T_SOA sp rdata_unknown
+    |	T_MB sp rdata_domain_name
     |	T_MB sp rdata_unknown
-    {
-	    zc_warning_prev_line("MB is obsolete");
-	    $$ = $1;
-	    parse_unknown_rdata($1, $3);
-    }
     |	T_MG sp rdata_domain_name
     |	T_MG sp rdata_unknown
     |	T_MR sp rdata_domain_name
@@ -721,56 +679,56 @@ type_and_rdata:
 
 rdata_a:	dotted_str trail
     {
-	    zadd_rdata_a(parser, $1.str);
+	    zadd_rdata_a($1.str);
     }
     ;
 
 rdata_domain_name:	dname trail
     {
 	    /* convert a single dname record */
-	    zadd_rdata_domain(parser, $1);
+	    zadd_rdata_domain($1);
     }
     ;
 
 rdata_soa:	dname sp dname sp str sp str sp str sp str sp str trail
     {
 	    /* convert the soa data */
-	    zadd_rdata_domain(parser, $1); /* prim. ns */
-	    zadd_rdata_domain(parser, $3); /* email */
-	    zadd_rdata_serial(parser, $5.str); /* serial */
-	    zadd_rdata_period(parser, $7.str); /* refresh */
-	    zadd_rdata_period(parser, $9.str); /* retry */
-	    zadd_rdata_period(parser, $11.str); /* expire */
-	    zadd_rdata_period(parser, $13.str); /* minimum */
+	    zadd_rdata_domain($1); /* prim. ns */
+	    zadd_rdata_domain($3); /* email */
+	    zadd_rdata_serial($5.str); /* serial */
+	    zadd_rdata_period($7.str); /* refresh */
+	    zadd_rdata_period($9.str); /* retry */
+	    zadd_rdata_period($11.str); /* expire */
+	    zadd_rdata_period($13.str); /* minimum */
     }
     ;
 
 rdata_wks:	dotted_str sp str sp concatenated_str_seq trail
     {
-	    zadd_rdata_a(parser, $1.str); /* address */
-	    zadd_rdata_services(parser, $3.str, $5.str); /* protocol and services */
+	    zadd_rdata_a($1.str); /* address */
+	    zadd_rdata_services($3.str, $5.str); /* protocol and services */
     }
     ;
 
 rdata_hinfo:	str sp str trail
     {
-	    zadd_rdata_text(parser, $1.str, $1.len); /* CPU */
-	    zadd_rdata_text(parser, $3.str, $3.len); /* OS*/
+	    zadd_rdata_text($1.str, $1.len); /* CPU */
+	    zadd_rdata_text($3.str, $3.len); /* OS*/
     }
     ;
 
 rdata_minfo:	dname sp dname trail
     {
 	    /* convert a single dname record */
-	    zadd_rdata_domain(parser, $1);
-	    zadd_rdata_domain(parser, $3);
+	    zadd_rdata_domain($1);
+	    zadd_rdata_domain($3);
     }
     ;
 
 rdata_mx:	str sp dname trail
     {
-	    zadd_rdata_short(parser, $1.str);  /* priority */
-	    zadd_rdata_domain(parser, $3);	/* MX host */
+	    zadd_rdata_short($1.str);  /* priority */
+	    zadd_rdata_domain($3);	/* MX host */
     }
     ;
 
@@ -783,43 +741,43 @@ rdata_txt:	str_seq trail
 /* RFC 1183 */
 rdata_rp:	dname sp dname trail
     {
-	    zadd_rdata_domain(parser, $1); /* mbox d-name */
-	    zadd_rdata_domain(parser, $3); /* txt d-name */
+	    zadd_rdata_domain($1); /* mbox d-name */
+	    zadd_rdata_domain($3); /* txt d-name */
     }
     ;
 
 /* RFC 1183 */
 rdata_afsdb:	str sp dname trail
     {
-	    zadd_rdata_short(parser, $1.str); /* subtype */
-	    zadd_rdata_domain(parser, $3); /* domain name */
+	    zadd_rdata_short($1.str); /* subtype */
+	    zadd_rdata_domain($3); /* domain name */
     }
     ;
 
 /* RFC 1183 */
 rdata_x25:	str trail
     {
-	    zadd_rdata_text(parser, $1.str, $1.len); /* X.25 address. */
+	    zadd_rdata_text($1.str, $1.len); /* X.25 address. */
     }
     ;
 
 /* RFC 1183 */
 rdata_isdn:	str trail
     {
-	    zadd_rdata_text(parser, $1.str, $1.len); /* address */
+	    zadd_rdata_text($1.str, $1.len); /* address */
     }
     |	str sp str trail
     {
-	    zadd_rdata_text(parser, $1.str, $1.len); /* address */
-	    zadd_rdata_text(parser, $3.str, $3.len); /* sub-address */
+	    zadd_rdata_text($1.str, $1.len); /* address */
+	    zadd_rdata_text($3.str, $3.len); /* sub-address */
     }
     ;
 
 /* RFC 1183 */
 rdata_rt:	str sp dname trail
     {
-	    zadd_rdata_short(parser, $1.str); /* preference */
-	    zadd_rdata_domain(parser, $3); /* intermediate host */
+	    zadd_rdata_short($1.str); /* preference */
+	    zadd_rdata_domain($3); /* intermediate host */
     }
     ;
 
@@ -830,7 +788,7 @@ rdata_nsap:	str_dot_seq trail
 	    if (strncasecmp($1.str, "0x", 2) != 0) {
 		    zc_error_prev_line("NSAP rdata must start with '0x'");
 	    } else {
-		    zadd_rdata_hex(parser, $1.str + 2, $1.len - 2); /* NSAP */
+		    zadd_rdata_hex($1.str + 2, $1.len - 2); /* NSAP */
 	    }
     }
     ;
@@ -838,68 +796,68 @@ rdata_nsap:	str_dot_seq trail
 /* RFC 2163 */
 rdata_px:	str sp dname sp dname trail
     {
-	    zadd_rdata_short(parser, $1.str); /* preference */
-	    zadd_rdata_domain(parser, $3); /* MAP822 */
-	    zadd_rdata_domain(parser, $5); /* MAPX400 */
+	    zadd_rdata_short($1.str); /* preference */
+	    zadd_rdata_domain($3); /* MAP822 */
+	    zadd_rdata_domain($5); /* MAPX400 */
     }
     ;
 
 rdata_aaaa:	dotted_str trail
     {
-	    zadd_rdata_aaaa(parser, $1.str);  /* IPv6 address */
+	    zadd_rdata_aaaa($1.str);  /* IPv6 address */
     }
     ;
 
 rdata_loc:	concatenated_str_seq trail
     {
-	    zadd_rdata_loc(parser, $1.str); /* Location */
+	    zadd_rdata_loc($1.str); /* Location */
     }
     ;
 
 rdata_nxt:	dname sp nxt_seq trail
     {
-	    zadd_rdata_domain(parser, $1); /* nxt name */
-	    zadd_rdata_nxt(parser, nxtbits); /* nxt bitlist */
+	    zadd_rdata_domain($1); /* nxt name */
+	    zadd_rdata_nxt(nxtbits); /* nxt bitlist */
 	    memset(nxtbits, 0, sizeof(nxtbits));
     }
     ;
 
 rdata_srv:	str sp str sp str sp dname trail
     {
-	    zadd_rdata_short(parser, $1.str); /* prio */
-	    zadd_rdata_short(parser, $3.str); /* weight */
-	    zadd_rdata_short(parser, $5.str); /* port */
-	    zadd_rdata_domain(parser, $7); /* target name */
+	    zadd_rdata_short($1.str); /* prio */
+	    zadd_rdata_short($3.str); /* weight */
+	    zadd_rdata_short($5.str); /* port */
+	    zadd_rdata_domain($7); /* target name */
     }
     ;
 
 /* RFC 2915 */
 rdata_naptr:	str sp str sp str sp str sp str sp dname trail
     {
-	    zadd_rdata_short(parser, $1.str); /* order */
-	    zadd_rdata_short(parser, $3.str); /* preference */
-	    zadd_rdata_text(parser, $5.str, $5.len); /* flags */
-	    zadd_rdata_text(parser, $7.str, $7.len); /* service */
-	    zadd_rdata_text(parser, $9.str, $9.len); /* regexp */
-	    zadd_rdata_domain(parser, $11); /* target name */
+	    zadd_rdata_short($1.str); /* order */
+	    zadd_rdata_short($3.str); /* preference */
+	    zadd_rdata_text($5.str, $5.len); /* flags */
+	    zadd_rdata_text($7.str, $7.len); /* service */
+	    zadd_rdata_text($9.str, $9.len); /* regexp */
+	    zadd_rdata_domain($11); /* target name */
     }
     ;
 
 /* RFC 2230 */
 rdata_kx:	str sp dname trail
     {
-	    zadd_rdata_short(parser, $1.str); /* preference */
-	    zadd_rdata_domain(parser, $3); /* exchanger */
+	    zadd_rdata_short($1.str); /* preference */
+	    zadd_rdata_domain($3); /* exchanger */
     }
     ;
 
 /* RFC 2538 */
 rdata_cert:	str sp str sp str sp str_sp_seq trail
     {
-	    zadd_rdata_certificate_type(parser, $1.str); /* type */
-	    zadd_rdata_short(parser, $3.str); /* key tag */
-	    zadd_rdata_algorithm(parser, $5.str); /* algorithm */
-	    zadd_rdata_b64(parser, $7.str); /* certificate or CRL */
+	    zadd_rdata_certificate_type($1.str); /* type */
+	    zadd_rdata_short($3.str); /* key tag */
+	    zadd_rdata_algorithm($5.str); /* algorithm */
+	    zadd_rdata_b64($7.str); /* certificate or CRL */
     }
     ;
 
@@ -909,67 +867,66 @@ rdata_apl:	rdata_apl_seq trail
 
 rdata_apl_seq:	dotted_str
     {
-	    zadd_rdata_apl_rdata(parser, $1.str);
+	    zadd_rdata_apl_rdata($1.str);
     }
     |	rdata_apl_seq sp dotted_str
     {
-	    zadd_rdata_apl_rdata(parser, $3.str);
+	    zadd_rdata_apl_rdata($3.str);
     }
     ;
 
 rdata_ds:	str sp str sp str sp str_sp_seq trail
     {
-	    zadd_rdata_short(parser, $1.str); /* keytag */
-	    zadd_rdata_algorithm(parser, $3.str); /* alg */
-	    zadd_rdata_byte(parser, $5.str); /* type */
-	    zadd_rdata_hex(parser, $7.str, $7.len); /* hash */
+	    zadd_rdata_short($1.str); /* keytag */
+	    zadd_rdata_algorithm($3.str); /* alg */
+	    zadd_rdata_byte($5.str); /* type */
+	    zadd_rdata_hex($7.str, $7.len); /* hash */
     }
     ;
 
 rdata_dlv:	str sp str sp str sp str_sp_seq trail
     {
-	    zadd_rdata_short(parser, $1.str); /* keytag */
-	    zadd_rdata_algorithm(parser, $3.str); /* alg */
-	    zadd_rdata_byte(parser, $5.str); /* type */
-	    zadd_rdata_hex(parser, $7.str, $7.len); /* hash */
+	    zadd_rdata_short($1.str); /* keytag */
+	    zadd_rdata_algorithm($3.str); /* alg */
+	    zadd_rdata_byte($5.str); /* type */
+	    zadd_rdata_hex($7.str, $7.len); /* hash */
     }
     ;
 
 rdata_sshfp:	str sp str sp str_sp_seq trail
     {
-	    zadd_rdata_byte(parser, $1.str); /* alg */
-	    zadd_rdata_byte(parser, $3.str); /* fp type */
-	    zadd_rdata_hex(parser, $5.str, $5.len); /* hash */
-	    //check_sshfp();
+	    zadd_rdata_byte($1.str); /* alg */
+	    zadd_rdata_byte($3.str); /* fp type */
+	    zadd_rdata_hex($5.str, $5.len); /* hash */
     }
     ;
 
 rdata_dhcid:	str_sp_seq trail
     {
-	    zadd_rdata_b64(parser, $1.str); /* data blob */
+	    zadd_rdata_b64($1.str); /* data blob */
     }
     ;
 
 rdata_rrsig:	str sp str sp str sp str sp str sp str sp str sp wire_dname sp str_sp_seq trail
     {
-	    zadd_rdata_rrtype(parser, $1.str); /* rr covered */
-	    zadd_rdata_algorithm(parser, $3.str); /* alg */
-	    zadd_rdata_byte(parser, $5.str); /* # labels */
-	    zadd_rdata_period(parser, $7.str); /* # orig TTL */
-	    zadd_rdata_time(parser, $9.str); /* sig exp */
-	    zadd_rdata_time(parser, $11.str); /* sig inc */
-	    zadd_rdata_short(parser, $13.str); /* key id */
-	    zadd_rdata_dns_name(parser, 
+	    zadd_rdata_rrtype($1.str); /* rr covered */
+	    zadd_rdata_algorithm($3.str); /* alg */
+	    zadd_rdata_byte($5.str); /* # labels */
+	    zadd_rdata_period($7.str); /* # orig TTL */
+	    zadd_rdata_time($9.str); /* sig exp */
+	    zadd_rdata_time($11.str); /* sig inc */
+	    zadd_rdata_short($13.str); /* key id */
+	    zadd_rdata_dns_name( 
 				(const uint8_t*) $15.str,$15.len); /* sig name */
-	    zadd_rdata_b64(parser, $17.str); /* sig data */
+	    zadd_rdata_b64($17.str); /* sig data */
     }
     ;
 
 rdata_nsec:	wire_dname nsec_seq
     {
-	    zadd_rdata_dns_name(parser, 
+	    zadd_rdata_dns_name(
 				(const uint8_t*) $1.str, $1.len); /* nsec name */
-	    zadd_rdata_nsec(parser, nsecbits); /* nsec bitlist */
+	    zadd_rdata_nsec(nsecbits); /* nsec bitlist */
 	    memset(nsecbits, 0, sizeof(nsecbits));
             nsec_highest_rcode = 0;
     }
@@ -977,71 +934,63 @@ rdata_nsec:	wire_dname nsec_seq
 
 rdata_nsec3:   str sp str sp str sp str sp str nsec_seq
     {
-#ifdef NSEC3
 	    nsec3_add_params($1.str, $3.str, $5.str, $7.str, $7.len);
 
-	    zadd_rdata_b32(parser, $9.str); /* next hashed name */
-	    zadd_rdata_nsec(parser, nsecbits); /* nsec bitlist */
+	    zadd_rdata_b32($9.str); /* next hashed name */
+	    zadd_rdata_nsec(nsecbits); /* nsec bitlist */
 	    memset(nsecbits, 0, sizeof(nsecbits));
 	    nsec_highest_rcode = 0;
-#else
-	    zc_error_prev_line("nsec3 not supported");
-#endif /* NSEC3 */
     }
     ;
 
 rdata_nsec3_param:   str sp str sp str sp str trail
     {
-#ifdef NSEC3
 	    nsec3_add_params($1.str, $3.str, $5.str, $7.str, $7.len);
-#else
-	    zc_error_prev_line("nsec3 not supported");
-#endif /* NSEC3 */
     }
     ;
 
 rdata_tlsa:	str sp str sp str sp str_sp_seq trail
     {
-	    zadd_rdata_byte(parser, $1.str); /* usage */
-	    zadd_rdata_byte(parser, $3.str); /* selector */
-	    zadd_rdata_byte(parser, $5.str); /* matching type */
-	    zadd_rdata_hex(parser, $7.str, $7.len); /* ca data */
+	    zadd_rdata_byte($1.str); /* usage */
+	    zadd_rdata_byte($3.str); /* selector */
+	    zadd_rdata_byte($5.str); /* matching type */
+	    zadd_rdata_hex($7.str, $7.len); /* ca data */
     }
     ;
 
 rdata_smimea:	str sp str sp str sp str_sp_seq trail
     {
-	    zadd_rdata_byte(parser, $1.str); /* usage */
-	    zadd_rdata_byte(parser, $3.str); /* selector */
-	    zadd_rdata_byte(parser, $5.str); /* matching type */
-	    zadd_rdata_hex(parser, $7.str, $7.len); /* ca data */
+	    zadd_rdata_byte($1.str); /* usage */
+	    zadd_rdata_byte($3.str); /* selector */
+	    zadd_rdata_byte($5.str); /* matching type */
+	    zadd_rdata_hex($7.str, $7.len); /* ca data */
     }
     ;
 
 rdata_dnskey:	str sp str sp str sp str_sp_seq trail
     {
-	    zadd_rdata_short(parser, $1.str); /* flags */
-	    zadd_rdata_byte(parser, $3.str); /* proto */
-	    zadd_rdata_algorithm(parser, $5.str); /* alg */
-	    zadd_rdata_b64(parser, $7.str); /* hash */
+	    zadd_rdata_short($1.str); /* flags */
+	    zadd_rdata_byte($3.str); /* proto */
+	    zadd_rdata_algorithm($5.str); /* alg */
+	    zadd_rdata_b64($7.str); /* hash */
     }
     ;
 
 rdata_ipsec_base: str sp str sp str sp dotted_str
     {
 	    const dname_type* name = 0;
-	    zadd_rdata_byte(parser, $1.str); /* precedence */
-	    zadd_rdata_byte(parser, $3.str); /* gateway type */
-	    zadd_rdata_byte(parser, $5.str); /* algorithm */
+	    zadd_rdata_byte($1.str); /* precedence */
+	    zadd_rdata_byte($3.str); /* gateway type */
+	    zadd_rdata_byte($5.str); /* algorithm */
 	    switch(atoi($3.str)) {
 		case IPSECKEY_NOGATEWAY: 
 			//zadd_rdata_ireformat(alloc_rdata_init(parser->region, "", 0));
 			break;
 		case IPSECKEY_IP4:
-			zadd_rdata_a(parser, $7.str);
+			zadd_rdata_a($7.str);
 			break;
 		case IPSECKEY_IP6:
-			zadd_rdata_aaaa(parser, $7.str);
+			zadd_rdata_aaaa($7.str);
 			break;
 		case IPSECKEY_DNAME:
 			/* convert and insert the dname */
@@ -1052,7 +1001,7 @@ rdata_ipsec_base: str sp str sp str sp dotted_str
 				break;
 			}
 			if($7.str[strlen($7.str)-1] != '.') {
-				if(parser->origin == error_dname) {
+				if(parser->origin == NULL) {
 		    			zc_error("cannot concatenate origin to domain name, because origin failed to parse");
 					break;
 				} else if(name->name_size + parser->origin->name_size - 1 > MAXDOMAINLEN) {
@@ -1062,7 +1011,7 @@ rdata_ipsec_base: str sp str sp str sp dotted_str
 				}
 				name = dname_concatenate(parser->rr_region, name, parser->origin);
 			}
-			zadd_rdata_domain(parser, name);
+			zadd_rdata_domain(name);
 			break;
 		default:
 			zc_error_prev_line("unknown IPSECKEY gateway type");
@@ -1072,7 +1021,7 @@ rdata_ipsec_base: str sp str sp str sp dotted_str
 
 rdata_ipseckey:	rdata_ipsec_base sp str_sp_seq trail
     {
-	   zadd_rdata_b64(parser, $3.str); /* public key */
+	   zadd_rdata_b64($3.str); /* public key */
     }
     | rdata_ipsec_base trail
     ;
@@ -1080,75 +1029,75 @@ rdata_ipseckey:	rdata_ipsec_base sp str_sp_seq trail
 /* RFC 6742 */ 
 rdata_nid:	str sp dotted_str trail
     {
-	    zadd_rdata_short(parser, $1.str);  /* preference */
-	    zadd_rdata_ilnp64(parser, $3.str);  /* NodeID */
+	    zadd_rdata_short($1.str);  /* preference */
+	    zadd_rdata_ilnp64($3.str);  /* NodeID */
     }
     ;
 
 rdata_l32:	str sp dotted_str trail
     {
-	    zadd_rdata_short(parser, $1.str);  /* preference */
-	    zadd_rdata_a(parser, $3.str);  /* Locator32 */
+	    zadd_rdata_short($1.str);  /* preference */
+	    zadd_rdata_a($3.str);  /* Locator32 */
     }
     ;
 
 rdata_l64:	str sp dotted_str trail
     {
-	    zadd_rdata_short(parser, $1.str);  /* preference */
-	    zadd_rdata_ilnp64(parser, $3.str);  /* Locator64 */
+	    zadd_rdata_short($1.str);  /* preference */
+	    zadd_rdata_ilnp64($3.str);  /* Locator64 */
     }
     ;
 
 rdata_lp:	str sp dname trail
     {
-	    zadd_rdata_short(parser, $1.str);  /* preference */
-	    zadd_rdata_domain(parser, $3);  /* FQDN */
+	    zadd_rdata_short($1.str);  /* preference */
+	    zadd_rdata_domain($3);  /* FQDN */
     }
     ;
 
 rdata_eui48:	str trail
     {
-	    zadd_rdata_eui(parser, $1.str, 48);
+	    zadd_rdata_eui($1.str, 48);
     }
     ;
 
 rdata_eui64:	str trail
     {
-	    zadd_rdata_eui(parser, $1.str, 64);
+	    zadd_rdata_eui($1.str, 64);
     }
     ;
 
 /* RFC7553 */
 rdata_uri:	str sp str sp dotted_str trail
     {
-	    zadd_rdata_short(parser, $1.str); /* priority */
-	    zadd_rdata_short(parser, $3.str); /* weight */
-	    zadd_rdata_long_text(parser, $5.str, $5.len); /* target */
+	    zadd_rdata_short($1.str); /* priority */
+	    zadd_rdata_short($3.str); /* weight */
+	    zadd_rdata_long_text($5.str, $5.len); /* target */
     }
     ;
 
 /* RFC 6844 */
 rdata_caa:	str sp str sp dotted_str trail
     {
-	    zadd_rdata_byte(parser, $1.str); /* Flags */
-	    zadd_rdata_tag(parser, $3.str, $3.len); /* Tag */
-	    zadd_rdata_long_text(parser, $5.str, $5.len); /* Value */
+	    zadd_rdata_byte($1.str); /* Flags */
+	    zadd_rdata_tag($3.str, $3.len); /* Tag */
+	    zadd_rdata_long_text($5.str, $5.len); /* Value */
     }
     ;
 
 /* RFC7929 */
 rdata_openpgpkey:	str_sp_seq trail
     {
-	    zadd_rdata_b64(parser, $1.str);
+	    zadd_rdata_b64($1.str);
     }
     ;
 
 /* RFC7477 */
 rdata_csync:	str sp str nsec_seq
     {
-	    zadd_rdata_serial(parser, $1.str);
-	    zadd_rdata_short(parser, $3.str);
-	    zadd_rdata_nsec(parser, nsecbits); /* nsec bitlist */
+	    zadd_rdata_serial($1.str);
+	    zadd_rdata_short($3.str);
+	    zadd_rdata_nsec(nsecbits); /* nsec bitlist */
 	    memset(nsecbits, 0, sizeof(nsecbits));
             nsec_highest_rcode = 0;
     }
@@ -1157,20 +1106,20 @@ rdata_csync:	str sp str nsec_seq
 /* draft-ietf-dnsop-dns-zone-digest */
 rdata_zonemd:	str sp str sp str sp str_sp_seq trail
     {
-	    zadd_rdata_serial(parser, $1.str); /* serial */
-	    zadd_rdata_byte(parser, $3.str); /* scheme */
-	    zadd_rdata_byte(parser, $5.str); /* hash algorithm */
-	    zadd_rdata_hex(parser, $7.str, $7.len); /* digest */
+	    zadd_rdata_serial($1.str); /* serial */
+	    zadd_rdata_byte($3.str); /* scheme */
+	    zadd_rdata_byte($5.str); /* hash algorithm */
+	    zadd_rdata_hex($7.str, $7.len); /* digest */
     }
     ;
 
 svcparam:	dotted_str QSTR
     {
-	zadd_rdata_svcbparam(parser, $1.str, $1.len, $2.str, $2.len);
+	zadd_rdata_svcbparam($1.str, $1.len, $2.str, $2.len);
     }
     |		dotted_str
     {
-	zadd_rdata_svcbparam(parser, $1.str, $1.len, NULL, 0);
+	zadd_rdata_svcbparam($1.str, $1.len, NULL, 0);
     }
     ;
 svcparams:	svcparam
@@ -1180,13 +1129,13 @@ svcparams:	svcparam
 rdata_svcb_base:	str sp dname
     {
 	    /* SvcFieldPriority */
-	    zadd_rdata_short(parser, $1.str);
+	    zadd_rdata_short($1.str);
 	    /* SvcDomainName */
-	    zadd_rdata_domain(parser, $3);
+	    zadd_rdata_domain($3);
     };
 rdata_svcb:     rdata_svcb_base sp svcparams trail
     {
-        zadd_rdata_svcb_check_wireformat();
+        //zadd_rdata_svcb_check_wireformat();
     }
     |   rdata_svcb_base trail
     ;
@@ -1194,15 +1143,15 @@ rdata_svcb:     rdata_svcb_base sp svcparams trail
 rdata_unknown:	URR sp str sp str_sp_seq trail
     {
 	    /* $2 is the number of octets, currently ignored */
-	    $$ = zparser_conv_hex(parser->rr_region, $5.str, $5.len);
+	    zadd_rdata_hex($5.str, $5.len);
     }
     |	URR sp str trail
     {
-	    $$ = zparser_conv_hex(parser->rr_region, "", 0);
+	    zadd_rdata_hex("", 0);
     }
     |	URR error NL
     {
-	    $$ = zparser_conv_hex(parser->rr_region, "", 0);
+	    //$$ = zparser_conv_hex(parser->rr_region, "", 0);
     }
     ;
 %%
@@ -1216,23 +1165,25 @@ yywrap(void)
 /*
  * Create the parser.
  */
-zparser_type *
-zparser_create(region_type *rr_region)
+struct zparser *
+zparser_create(void)
 {
-	zparser_type *result;
+	struct zparser *result;
+  struct region *region;
+  struct region *rr_region;
 
-	result = (zparser_type *) region_alloc(rr_region, sizeof(zparser_type));
-	result->rr_region = rr_region;
+  region = region_create(xalloc, free);
+  rr_region = region_create(xalloc, free);
 
-	result->filename = NULL;
-	result->origin = NULL;
-	result->current_rr.owner = NULL;
-	result->current_rr.type = 0;
-	result->current_rr.klass = 0;
-	result->current_rr.ttl = 0;
-	result->current_rr.rdata.length = 0;
+  result = malloc(sizeof(*result));//(struct zparser *) region_alloc(rr_region, sizeof(*result));
+  memset(result, 0, sizeof(*result));
+  result->region = region;
+  result->rr_region = rr_region;
 
-	return result;
+  result->filename = NULL;
+  result->origin = NULL;
+
+  return result;
 }
 
 /*
@@ -1325,22 +1276,20 @@ zc_warning(const char *fmt, ... )
 	va_end(args);
 }
 
-#ifdef NSEC3
 static void
-nsec3_add_params(struct zparser *parser, const char* hashalgo_str, const char* flag_str,
+nsec3_add_params(const char* hashalgo_str, const char* flag_str,
 	const char* iter_str, const char* salt_str, int salt_len)
 {
-	zadd_rdata_byte(parser, hashalgo_str);
-	zadd_rdata_byte(parser, flag_str);
-	zadd_rdata_short(parser, iter_str);
+	zadd_rdata_byte(hashalgo_str);
+	zadd_rdata_byte(flag_str);
+	zadd_rdata_short(iter_str);
 
 	/* salt */
 	if(strcmp(salt_str, "-") != 0) {
-    zadd_rdata_hex_length(parser, salt_str, salt_len);
+    zadd_rdata_hex_length(salt_str, salt_len);
 	} else {
     uint8_t *p = parser_rdata(parser);
     *p = 0;
     parser_rdata_advance(parser, 1);
   }
 }
-#endif /* NSEC3 */

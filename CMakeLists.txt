@@ -15,11 +15,11 @@ flex_target(
 
 add_flex_bison_dependency(zlexer zparser)
 
-add_library(zonec ${FLEX_zlexer_OUTPUTS} ${BISON_zparser_OUTPUTS} dns.c zonec.c rdata.c dname.c util.c b64_pton.c)
+add_library(zonec ${FLEX_zlexer_OUTPUTS} ${BISON_zparser_OUTPUTS} dns.c zonec.c rdata.c dname.c util.c b64_pton.c region-allocator.c)
 
 target_include_directories(
   zonec PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>
                $<BUILD_INTERFACE:${CMAKE_CURRENT_BINARY_DIR}>)
 
-#add_executable(zonec-bench)
-#target_link_libraries(zonec-bench zonec)
+add_executable(zonec-test main.c)
+target_link_libraries(zonec-test zonec)
